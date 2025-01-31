@@ -84,8 +84,8 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ','.join([str(i) for i in range(args.gpu, 4
 
 # 训练程序########################################################
 if __name__ == '__main__':
-
-	dataset = EyeSetGenerator(dbname=args.db, datasize=args.ds, loo=args.loo) 
+	dataset_path = '/home/umerfarooq/Downloads/STARE/training/'
+	dataset = EyeSetGenerator(folder=dataset_path, datasize=128)
 	# dataset = EyeSetGenerator(dbname=args.db, isBasedPatch=args.patch) 
 	dataset.use_csm = args.csm
 

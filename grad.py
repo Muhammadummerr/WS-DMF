@@ -1,8 +1,87 @@
-#start#
-import os, glob, sys, time, torch
-from torch.optim import lr_scheduler
-# from torch.cuda import amp
+import os
+import torch
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 torch.set_printoptions(precision=3)
+
+
+class FocalLoss(torch.nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, input, target):
+        # Apply softmax if logits are passed
+        if input.dim() > 2:
+            input = input.view(input.size(0), input.size(1), -1)
+            input = input.transpose(1, 2)
+            input = input.contiguous().view(-1, input.size(-1))
+        target = target.view(-1)
+
+        # Cross-entropy loss
+        ce_loss = F.cross_entropy(input, target, reduction='none')
+
+        # Compute the focal loss
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+
+
+class DiceLoss(torch.nn.Module):
+    def __init__(self, smooth=1.0):
+        super(DiceLoss, self).__init__()
+        self.smooth = smooth
+
+    def forward(self, input, target):
+        # Flatten the tensors
+        input = input.view(-1)
+        target = target.view(-1)
+        
+        intersection = (input * target).sum()
+        union = input.sum() + target.sum()
+        
+        dice_score = (2.0 * intersection + self.smooth) / (union + self.smooth)
+        return 1 - dice_score  # The loss is 1 - Dice score
+
+# Define the get_loss function
+def get_loss(loss_name):
+    if loss_name == 'ce':
+        return torch.nn.CrossEntropyLoss()
+    elif loss_name == 'mse':
+        return torch.nn.MSELoss()
+    elif loss_name == 'bce':
+        return torch.nn.BCEWithLogitsLoss()
+    elif loss_name == 'di':  # For Dice Loss
+        return DiceLoss()
+    elif loss_name == 'fr':  # For Focal Loss
+        return FocalLoss()
+    else:
+        raise ValueError(f"Unknown loss function: {loss_name}")
+
+# Define RAdamW class
+class RAdamW(AdamW):
+    def __init__(self, params, lr=0.01, weight_decay=2e-4, betas=(0.9, 0.999), eps=1e-8):
+        super(RAdamW, self).__init__(params, lr=lr, weight_decay=weight_decay, betas=betas, eps=eps)
+
+# Define ReduceLR class
+class ReduceLR(ReduceLROnPlateau):
+    def __init__(self, name, optimizer, mode='min', factor=0.7, patience=2, verbose=False,
+                 threshold=0.0001, threshold_mode='rel', cooldown=2, min_lr=1e-5, eps=1e-9):
+        super(ReduceLR, self).__init__(optimizer, mode=mode, factor=factor, patience=patience,
+                                       verbose=verbose, threshold=threshold, threshold_mode=threshold_mode,
+                                       cooldown=cooldown, min_lr=min_lr, eps=eps)
+        self.name = name
+
 
 class GradUtil(object):
 	def __init__(self, model, loss='ce', lr=0.01, wd=2e-4, root='.'):

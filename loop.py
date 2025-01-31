@@ -10,6 +10,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # 图像显示
 from matplotlib import pyplot as plt
 plt.rcParams['image.cmap'] = 'gray'
+from grad import GradUtil
 
 import torch
 import torch.nn as nn
@@ -17,7 +18,7 @@ import torch.nn.functional as F
 
 #start#
 import time, tqdm
-from torchvision.transforms import functional as f
+import torchvision.transforms as transforms
 
 class KerasBackend(object):
 	bests = {'auc':0, 'iou':0, 'f1s':0, 'a':0}
@@ -262,26 +263,32 @@ class KerasTorch(KerasBackend):
 				break
 		return lossItem
 
+
+
 	def predict(self, img, *args):
 		self.model.eval()
 		torch.set_grad_enabled(False)
-		# with torch.no_grad():  
-		if not (isinstance(img, dict) or isinstance(img, list)):
-			img = img.to(self.device)      
-		pred = self.model(img)#*fov.to(self.device)
+
+		# Convert input to grayscale if it's a 3-channel image
+		if len(img.shape) == 4 and img.shape[1] == 3:  # Check for batch of RGB images
+			transform = transforms.Grayscale(num_output_channels=1)
+			img = torch.stack([transform(img[i]) for i in range(img.shape[0])])
+
+		img = img.to(self.device)
+		pred = self.model(img)  # *fov.to(self.device)
 		if isinstance(pred, dict):
 			pred = pred['pred']
 		if isinstance(pred, (list, tuple)):
 			pred = pred[0]
 		pred = pred.detach()
-		# pred = pred*fov if fov is not None else pred
 		return pred.clamp(0, 1)
+
 
 
 
 	def val(self):
 		torch.set_grad_enabled(False)
-		self.model.eval()        
+		self.model.eval()
 		sum_auc = 0
 		sum_iou = 0
 		sum_f1s = 0
@@ -289,19 +296,22 @@ class KerasTorch(KerasBackend):
 
 		dataloader = self.dataset.valSet()
 		for i, imgs in enumerate(dataloader):
-			(img, lab, fov, aux) = self.dataset.parse(imgs) 
+			img, lab = imgs  # Unpack images and labels directly
+			fov, aux = None, None  # Set FOV and auxiliary data as None
+
 			pred = self.predict(img)
-			loss = self.gradUtil.backward_seg(pred, lab.to(self.device), fov, self.model, requires_grad=False)[0] 
+			loss = self.gradUtil.backward_seg(pred, lab.to(self.device), fov, self.model, requires_grad=False)[0]
 			sum_los += loss
+
 			true = lab.squeeze().numpy().astype(np.float32)
 			pred = pred.cpu().squeeze().numpy().astype(np.float32)
 
 			true = true.reshape(-1)
 			pred = pred.reshape(-1)
 			if fov is not None:
-				fov = fov.view(-1).numpy().astype(np.bool_)  
+				fov = fov.view(-1).numpy().astype(np.bool_)
 				true, pred = true[fov], pred[fov]
-				
+
 			true = np.round(true)
 			auc = metrics.roc_auc_score(true, pred)
 			sum_auc += auc
@@ -312,10 +322,12 @@ class KerasTorch(KerasBackend):
 			f1s = metrics.f1_score(true, pred, average='binary')
 			sum_f1s += f1s
 			print('\r{:03}$ auc={:.4f} & iou={:.4f} & f1s={:.4f} & a={:.4f}'.format(i, auc, iou, f1s, f1s), end='')
-			if self.args.bug and i>2:
+			if self.args.bug and i > 2:
 				break
-		num = len(dataloader)#i+1#
-		los = sum_los/num
-		scores = {'auc':sum_auc/num, 'iou':sum_iou/num, 'f1s':sum_f1s/num, 'a':sum_f1s/num}
+
+		num = len(dataloader)
+		los = sum_los / num
+		scores = {'auc': sum_auc / num, 'iou': sum_iou / num, 'f1s': sum_f1s / num, 'a': sum_f1s / num}
 		return scores, los
+
 #end#
